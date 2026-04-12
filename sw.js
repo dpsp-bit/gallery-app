@@ -5,11 +5,17 @@ const ASSETS_TO_CACHE = [
   '/manifest.json'
 ];
 
-// Install Event: Cache core assets
+// Install Event: Cache core assets with individual resilience
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS_TO_CACHE);
+    caches.open(CACHE_NAME).then(async (cache) => {
+      for (const asset of ASSETS_TO_CACHE) {
+        try {
+          await cache.add(asset);
+        } catch (e) {
+          console.warn(`[SW] Failed to cache ${asset} during install:`, e);
+        }
+      }
     })
   );
   self.skipWaiting();
@@ -31,11 +37,32 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Fetch Event: Stale-While-Revalidate strategy
+// Fetch Event: Network-First for HTML, Stale-While-Revalidate for Assets
 self.addEventListener('fetch', (event) => {
   // Only handle GET requests
   if (event.request.method !== 'GET') return;
 
+  // Network-First strategy for navigation (HTML) to always get the latest Vite bundle hashes
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request).then((networkResponse) => {
+        const cacheCopy = networkResponse.clone();
+        caches.open(CACHE_NAME).then(cache => cache.put(event.request, cacheCopy));
+        return networkResponse;
+      }).catch(async () => {
+        const cached = await caches.match(event.request);
+        if (cached) return cached;
+        return new Response('Network error occurred', { 
+          status: 503, 
+          statusText: 'Service Unavailable',
+          headers: { 'Content-Type': 'text/plain' }
+        });
+      })
+    );
+    return;
+  }
+
+  // Stale-While-Revalidate for other assets and images
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       const fetchPromise = fetch(event.request).then((networkResponse) => {
@@ -43,12 +70,18 @@ self.addEventListener('fetch', (event) => {
         if (networkResponse && networkResponse.status === 200) {
           const cacheCopy = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, cacheCopy);
+            // Suppress errors for unsupported schemes (like chrome-extension://)
+            cache.put(event.request, cacheCopy).catch(() => {});
           });
         }
         return networkResponse;
       }).catch(() => {
-        // Fallback or just return undefined if offline and not in cache
+        // Return a valid mock Response object so respondWith doesn't throw a TypeError
+        return new Response('Network error occurred', { 
+          status: 503, 
+          statusText: 'Service Unavailable',
+          headers: { 'Content-Type': 'text/plain' }
+        });
       });
 
       return cachedResponse || fetchPromise;
