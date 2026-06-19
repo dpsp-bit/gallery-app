@@ -177,6 +177,7 @@ self.addEventListener('fetch', (event) => {
 
   // Network-First strategy for navigation (HTML) to always get the latest Vite bundle hashes
   if (event.request.mode === 'navigate') {
+    console.log('[SW] Navigation request (HTML):', event.request.url);
     event.respondWith(
       fetch(event.request).then((networkResponse) => {
         const cacheCopy = networkResponse.clone();
@@ -184,7 +185,10 @@ self.addEventListener('fetch', (event) => {
         return networkResponse;
       }).catch(async () => {
         const cached = await caches.match(event.request);
-        if (cached) return cached;
+        if (cached) {
+          console.log('[SW] Serving offline navigation HTML from cache');
+          return cached;
+        }
         return new Response('Network error occurred', { 
           status: 503, 
           statusText: 'Service Unavailable',
@@ -198,23 +202,39 @@ self.addEventListener('fetch', (event) => {
   // Stale-While-Revalidate for other assets and images
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
+      const isImg = isGalleryImage(event.request.url, event.request.destination);
+
+      if (cachedResponse) {
+        console.log(`[SW] Cache HIT for ${isImg ? 'image' : 'asset'}:`, event.request.url);
+      } else {
+        console.log(`[SW] Cache MISS for ${isImg ? 'image' : 'asset'}:`, event.request.url);
+      }
+
       const fetchPromise = fetch(event.request).then((networkResponse) => {
+        console.log('[SW] Network response received:', event.request.url, 'status:', networkResponse?.status);
+        
         // Cache successful responses for valid URLs (including status 0/opaque)
         if (networkResponse && (networkResponse.status === 200 || networkResponse.status === 0)) {
           const cacheCopy = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => {
             // Suppress errors for unsupported schemes (like chrome-extension://)
             cache.put(event.request, cacheCopy).then(() => {
-              if (isGalleryImage(event.request.url, event.request.destination)) {
+              console.log('[SW] Cache updated/written successfully:', event.request.url);
+              if (isImg) {
                 recordAccess(event.request.url).then(() => {
                   evictCache();
                 });
               }
-            }).catch(() => {});
+            }).catch((err) => {
+              console.error('[SW] Failed to write cache.put for:', event.request.url, err);
+            });
           });
+        } else {
+          console.warn('[SW] Skip caching due to invalid status:', event.request.url, 'status:', networkResponse?.status);
         }
         return networkResponse;
-      }).catch(() => {
+      }).catch((err) => {
+        console.error('[SW] Network fetch failed for:', event.request.url, err);
         // Return a valid mock Response object so respondWith doesn't throw a TypeError
         return new Response('Network error occurred', { 
           status: 503, 
@@ -225,7 +245,7 @@ self.addEventListener('fetch', (event) => {
 
       if (cachedResponse) {
         // Cache hit: update access time in background
-        if (isGalleryImage(event.request.url, event.request.destination)) {
+        if (isImg) {
           recordAccess(event.request.url);
         }
         return cachedResponse;
