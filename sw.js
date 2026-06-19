@@ -177,16 +177,17 @@ self.addEventListener('fetch', (event) => {
 
   // Network-First strategy for navigation (HTML) to always get the latest Vite bundle hashes
   if (event.request.mode === 'navigate') {
-    console.log('[SW] Navigation request (HTML):', event.request.url);
+    console.log('[SW] Navigation request (HTML) started:', event.request.url);
     event.respondWith(
       fetch(event.request).then((networkResponse) => {
+        console.log('[SW] HTML loaded from network:', event.request.url);
         const cacheCopy = networkResponse.clone();
         caches.open(CACHE_NAME).then(cache => cache.put(event.request, cacheCopy));
         return networkResponse;
       }).catch(async () => {
         const cached = await caches.match(event.request);
         if (cached) {
-          console.log('[SW] Serving offline navigation HTML from cache');
+          console.log('[SW] HTML loaded from cache (fallback):', event.request.url);
           return cached;
         }
         return new Response('Network error occurred', { 
