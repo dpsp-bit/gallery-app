@@ -151,7 +151,7 @@ self.addEventListener('install', (event) => {
       }
     })
   );
-  self.skipWaiting();
+  // Do not call self.skipWaiting() automatically to let the user choose to reload.
 });
 
 // Activate Event: Cleanup old caches
@@ -175,26 +175,34 @@ self.addEventListener('fetch', (event) => {
   // Only handle GET requests
   if (event.request.method !== 'GET') return;
 
-  // Network-First strategy for navigation (HTML) to always get the latest Vite bundle hashes
+  // Cache-First (Stale-While-Revalidate) strategy for navigation (HTML) to always load from cache at startup
   if (event.request.mode === 'navigate') {
     console.log('[SW] Navigation request (HTML) started:', event.request.url);
     event.respondWith(
-      fetch(event.request).then((networkResponse) => {
-        console.log('[SW] HTML loaded from network:', event.request.url);
-        const cacheCopy = networkResponse.clone();
-        caches.open(CACHE_NAME).then(cache => cache.put(event.request, cacheCopy));
-        return networkResponse;
-      }).catch(async () => {
-        const cached = await caches.match(event.request);
-        if (cached) {
-          console.log('[SW] HTML loaded from cache (fallback):', event.request.url);
-          return cached;
-        }
-        return new Response('Network error occurred', { 
-          status: 503, 
-          statusText: 'Service Unavailable',
-          headers: { 'Content-Type': 'text/plain' }
+      caches.match(event.request).then((cachedResponse) => {
+        const fetchPromise = fetch(event.request).then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            console.log('[SW] HTML loaded from network, updating cache:', event.request.url);
+            const cacheCopy = networkResponse.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(event.request, cacheCopy));
+          }
+          return networkResponse;
+        }).catch((err) => {
+          console.error('[SW] HTML fetch failed:', err);
+          return new Response('Network error occurred', { 
+            status: 503, 
+            statusText: 'Service Unavailable',
+            headers: { 'Content-Type': 'text/plain' }
+          });
         });
+
+        if (cachedResponse) {
+          console.log('[SW] HTML loaded from cache:', event.request.url);
+          return cachedResponse;
+        }
+
+        console.log('[SW] HTML cache miss, waiting for network:', event.request.url);
+        return fetchPromise;
       })
     );
     return;
@@ -272,4 +280,11 @@ self.addEventListener('fetch', (event) => {
       return fetchPromise;
     })
   );
+});
+
+// Message Event: Listen for messages from clients to skip waiting and activate
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
