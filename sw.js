@@ -7,7 +7,7 @@ const ASSETS_TO_CACHE = [
 
 const METADATA_STORE = 'cache_metadata';
 const PHOTO_STORE = 'photos';
-const DB_VERSION = 4;
+const DB_VERSION = 7;
 const DB_NAME = 'pwa-gallery';
 const MAX_CACHE_ENTRIES = 500;
 
@@ -205,13 +205,31 @@ self.addEventListener('fetch', (event) => {
     caches.match(event.request).then((cachedResponse) => {
       const isImg = isGalleryImage(event.request.url, event.request.destination);
 
-      if (cachedResponse) {
+      let validCachedResponse = cachedResponse;
+      if (cachedResponse && cachedResponse.type === 'opaque' && event.request.mode === 'cors') {
+        console.log(`[SW] Ignoring cached opaque response for CORS request:`, event.request.url);
+        validCachedResponse = undefined;
+      }
+
+      if (validCachedResponse) {
         console.log(`[SW] Cache HIT for ${isImg ? 'image' : 'asset'}:`, event.request.url);
       } else {
         console.log(`[SW] Cache MISS for ${isImg ? 'image' : 'asset'}:`, event.request.url);
       }
 
-      const fetchPromise = fetch(event.request).then((networkResponse) => {
+      let networkFetch;
+      if (isImg && event.request.mode === 'no-cors') {
+        networkFetch = fetch(new Request(event.request, { mode: 'cors' }))
+          .then(res => (res.status === 200 ? res : Promise.reject('Invalid CORS response')))
+          .catch(() => {
+            console.log(`[SW] CORS fetch failed for ${event.request.url}, falling back to no-cors`);
+            return fetch(event.request);
+          });
+      } else {
+        networkFetch = fetch(event.request);
+      }
+
+      const fetchPromise = networkFetch.then((networkResponse) => {
         console.log('[SW] Network response received:', event.request.url, 'status:', networkResponse?.status);
         
         // Cache successful responses for valid URLs (including status 0/opaque)
@@ -244,12 +262,12 @@ self.addEventListener('fetch', (event) => {
         });
       });
 
-      if (cachedResponse) {
+      if (validCachedResponse) {
         // Cache hit: update access time in background
         if (isImg) {
           recordAccess(event.request.url);
         }
-        return cachedResponse;
+        return validCachedResponse;
       }
       return fetchPromise;
     })
