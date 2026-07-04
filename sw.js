@@ -9,7 +9,7 @@ const METADATA_STORE = 'cache_metadata';
 const PHOTO_STORE = 'photos';
 const DB_VERSION = 7;
 const DB_NAME = 'pwa-gallery';
-const MAX_CACHE_ENTRIES = 500;
+const MAX_CACHE_ENTRIES = 2000;
 
 function openDB() {
   return new Promise((resolve, reject) => {
