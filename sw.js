@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pwa-gallery-v1';
+const CACHE_NAME = 'pwa-gallery-v2';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
